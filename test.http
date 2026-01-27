@@ -1,0 +1,69 @@
+### Variables
+@baseUrl = http://localhost:3000
+@apiKey = dev_api_key_12345
+
+### Health Check
+GET {{baseUrl}}/health
+
+###
+
+### Create Wallet
+POST {{baseUrl}}/api/wallets
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "address": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+  "label": "My Test Wallet",
+  "tags": ["test", "main"]
+}
+
+###
+
+### Get All Wallets
+GET {{baseUrl}}/api/wallets
+x-api-key: {{apiKey}}
+
+###
+
+### Get Wallet by Address
+GET {{baseUrl}}/api/wallets/0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb
+x-api-key: {{apiKey}}
+
+###
+
+### Sync Wallet Positions
+POST {{baseUrl}}/api/wallets/0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb/sync
+x-api-key: {{apiKey}}
+
+###
+
+### Get All Positions
+GET {{baseUrl}}/api/positions
+x-api-key: {{apiKey}}
+
+###
+
+### Get Positions for Specific Wallet
+GET {{baseUrl}}/api/positions?wallet=0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb
+x-api-key: {{apiKey}}
+
+###
+
+### Get Position by Token ID
+GET {{baseUrl}}/api/positions/12345
+x-api-key: {{apiKey}}
+
+###
+
+### Get Aggregate Positions
+GET {{baseUrl}}/api/positions/aggregate
+x-api-key: {{apiKey}}
+
+###
+
+### Delete Wallet
+DELETE {{baseUrl}}/api/wallets/0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb
+x-api-key: {{apiKey}}
+
+###
