@@ -32,14 +32,10 @@ class PositionService {
     try {
       const positionData = await blockchainService.getPositionData(tokenId, chainId);
 
-      // Parse pool data from poolId - This is a simplified version
-      // In reality, you'd need to decode the poolId to get token addresses
-      const poolId = positionData.poolId;
-      
-      // For now, we'll use placeholder token info
-      // You'll need to implement proper pool data fetching
-      const token0Address = '0x0000000000000000000000000000000000000000';
-      const token1Address = '0x0000000000000000000000000000000000000000';
+      // V4 provides poolKey directly with token addresses
+      const { poolKey } = positionData;
+      const token0Address = poolKey.currency0;
+      const token1Address = poolKey.currency1;
 
       const [token0Info, token1Info] = await Promise.all([
         blockchainService.getTokenInfo(token0Address, chainId),
@@ -58,6 +54,14 @@ class PositionService {
         });
       }
 
+      // Generate a poolAddress identifier from the poolKey components
+      const poolId = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ['address', 'address', 'uint24', 'int24', 'address'],
+          [token0Address, token1Address, poolKey.fee, poolKey.tickSpacing, poolKey.hooks]
+        )
+      );
+
       position.poolAddress = poolId;
       position.token0Address = token0Address;
       position.token0Symbol = token0Info.symbol;
@@ -65,7 +69,8 @@ class PositionService {
       position.token1Address = token1Address;
       position.token1Symbol = token1Info.symbol;
       position.token1Decimals = token1Info.decimals;
-      position.fee = 3000; // Default, should be parsed from pool
+      position.fee = poolKey.fee;
+      position.hookAddress = poolKey.hooks;
       position.liquidity = positionData.liquidity;
       position.tickLower = Number(positionData.tickLower);
       position.tickUpper = Number(positionData.tickUpper);
@@ -93,14 +98,20 @@ class PositionService {
         return null;
       }
 
-      // Get current tick
-      const currentTick = await blockchainService.getCurrentTick(
-        position.poolAddress,
-        position.chainId || ChainId.ETHEREUM
-      );
-
-      // Calculate if position is in range
-      const inRange = currentTick >= position.tickLower && currentTick <= position.tickUpper;
+      // Try to get current tick, but don't fail if it doesn't work
+      // (V4 StateView integration needs more work)
+      let currentTick = 0;
+      let inRange = false;
+      try {
+        currentTick = await blockchainService.getCurrentTick(
+          position.poolAddress,
+          position.chainId || ChainId.ETHEREUM
+        );
+        inRange = currentTick >= position.tickLower && currentTick <= position.tickUpper;
+      } catch {
+        // StateView call failed, skip tick data
+        logger.warn(`Could not fetch current tick for position ${tokenId}`);
+      }
 
       // Get token prices
       const [token0Price, token1Price] = await Promise.all([

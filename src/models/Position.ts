@@ -20,7 +20,7 @@ export class Position {
   @Column({ length: 42 })
   owner!: string;
 
-  @Column({ length: 42 })
+  @Column({ length: 66 })
   poolAddress!: string;
 
   @Column({ length: 42 })

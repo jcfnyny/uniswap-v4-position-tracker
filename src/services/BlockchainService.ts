@@ -5,6 +5,7 @@ import { ChainId } from '../types';
 import PositionManagerABI from '../blockchain/abis/PositionManager.json';
 import StateViewABI from '../blockchain/abis/StateView.json';
 import ERC20ABI from '../blockchain/abis/ERC20.json';
+import graphService from './GraphService';
 
 class BlockchainService {
   private providers: Map<ChainId, JsonRpcProvider> = new Map();
@@ -105,15 +106,9 @@ class BlockchainService {
 
   public async getPositionTokenIds(ownerAddress: string, chainId: ChainId = ChainId.ETHEREUM): Promise<string[]> {
     try {
-      const contract = this.getPositionManagerContract(chainId);
-      const balance = await contract.balanceOf(ownerAddress);
-      const tokenIds: string[] = [];
-
-      for (let i = 0; i < Number(balance); i++) {
-        const tokenId = await contract.tokenOfOwnerByIndex(ownerAddress, i);
-        tokenIds.push(tokenId.toString());
-      }
-
+      // Uniswap V4 PositionManager does not implement ERC721Enumerable
+      // We need to use The Graph subgraph to get position token IDs
+      const tokenIds = await graphService.getPositionTokenIdsByOwner(ownerAddress, chainId);
       logger.info(`Found ${tokenIds.length} positions for ${ownerAddress}`);
       return tokenIds;
     } catch (error) {
@@ -125,19 +120,44 @@ class BlockchainService {
   public async getPositionData(tokenId: string, chainId: ChainId = ChainId.ETHEREUM): Promise<any> {
     try {
       const contract = this.getPositionManagerContract(chainId);
-      const position = await contract.positions(tokenId);
+
+      // V4 uses getPoolAndPositionInfo instead of positions
+      const [poolAndPositionInfo, liquidity] = await Promise.all([
+        contract.getPoolAndPositionInfo(tokenId),
+        contract.getPositionLiquidity(tokenId),
+      ]);
+
+      const [poolKey, packedInfo] = poolAndPositionInfo;
+
+      // Decode packed position info (tickLower: int24, tickUpper: int24)
+      // PositionInfo is packed as: tickLower (24 bits) | tickUpper (24 bits) | hasSubscriber (1 bit)
+      const infoAsBigInt = BigInt(packedInfo.toString());
+
+      // Extract tickLower (bits 0-23) and tickUpper (bits 24-47)
+      // tickLower and tickUpper are int24, so we need to handle sign extension
+      const tickLowerRaw = Number(infoAsBigInt & BigInt(0xFFFFFF));
+      const tickUpperRaw = Number((infoAsBigInt >> BigInt(24)) & BigInt(0xFFFFFF));
+
+      // Sign extend int24 values
+      const tickLower = tickLowerRaw > 0x7FFFFF ? tickLowerRaw - 0x1000000 : tickLowerRaw;
+      const tickUpper = tickUpperRaw > 0x7FFFFF ? tickUpperRaw - 0x1000000 : tickUpperRaw;
 
       return {
-        nonce: position.nonce,
-        operator: position.operator,
-        poolId: position.poolId,
-        tickLower: position.tickLower,
-        tickUpper: position.tickUpper,
-        liquidity: position.liquidity.toString(),
-        feeGrowthInside0LastX128: position.feeGrowthInside0LastX128.toString(),
-        feeGrowthInside1LastX128: position.feeGrowthInside1LastX128.toString(),
-        tokensOwed0: position.tokensOwed0.toString(),
-        tokensOwed1: position.tokensOwed1.toString(),
+        poolKey: {
+          currency0: poolKey.currency0,
+          currency1: poolKey.currency1,
+          fee: Number(poolKey.fee),
+          tickSpacing: Number(poolKey.tickSpacing),
+          hooks: poolKey.hooks,
+        },
+        tickLower,
+        tickUpper,
+        liquidity: liquidity.toString(),
+        // V4 doesn't expose fee growth at position level the same way - these would need StateView
+        feeGrowthInside0LastX128: '0',
+        feeGrowthInside1LastX128: '0',
+        tokensOwed0: '0',
+        tokensOwed1: '0',
       };
     } catch (error) {
       logger.error(`Error getting position data for token ${tokenId}:`, error);
@@ -151,6 +171,16 @@ class BlockchainService {
     name: string;
   }> {
     try {
+      // Handle native ETH (address 0) in Uniswap V4
+      const NATIVE_ADDRESS = '0x0000000000000000000000000000000000000000';
+      if (tokenAddress.toLowerCase() === NATIVE_ADDRESS) {
+        return {
+          symbol: 'ETH',
+          decimals: 18,
+          name: 'Ether',
+        };
+      }
+
       const contract = this.getERC20Contract(tokenAddress, chainId);
       const [symbol, decimals, name] = await Promise.all([
         contract.symbol(),
